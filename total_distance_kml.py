@@ -5,10 +5,10 @@ Summary:
     For the given .kml file, a total distance in miles is returned based on optional parameters/prompts.
 
 Arguments:
-    1) [Required] .kml file path  
-    2) [Optional, prompted if not entered] Path to the .KML Folder to calculate total distance on
-    3) [Optional, prompted if not entered] name of the Path in the folder to calculate total distance on 
-
+    1) [Required] -i: .kml file path  
+    2) [Optional] -f: Filepath to the .KML Folder to calculate total distance on
+    3) [Optional] -p: Name of the Path in the Folder to calculate total distance on 
+    4) [Optional] -r: Recursive Mode (Calculates total distance on Paths within Folder + all Sub-Folders)
 Notes:
     Default File Path to Google Earth myplaces.kml is in regedit: HKEY_CURRENT_USER\Software\Google\Google Earth Pro\KMLPath 
 """
@@ -18,8 +18,6 @@ import os
 import argparse
 from lxml import etree
 from geopy.distance import geodesic
-
-sum_all_distance = 0
 
 ns = {"kml": "http://www.opengis.net/kml/2.2",
       "gpx": "http://www.topografix.com/GPX/1/1"}
@@ -96,6 +94,12 @@ def calculate_path_distance(path):
     
     return sum_path_distance
 
+def sum_calculate_path_distance(all_paths):
+    sum_distance = 0
+    for path in all_paths:
+        sum_distance += calculate_path_distance(path)   
+    return sum_distance
+
 def folder_name(folder):
     name_element = folder.find("kml:name", ns)
     if name_element is not None and name_element.text:
@@ -159,12 +163,15 @@ def prompt_user_selected_folder(starting_folder):
         current_folder = selected_folder
 
 def main():
+    
+    sum_all_distance = 0
 
     # Handle Arguments
     parser = argparse.ArgumentParser(description="For the given parameters, a total distance in miles is returned.")
     parser.add_argument("-i", "--kml", type=check_kml_file, required=True, help="Input (.kml) file path")
-    parser.add_argument("-f", "--folder", type=str, help="Folder to calculate distance on")
+    parser.add_argument("-f", "--folder", type=str, help="Filepath to the folder to calculate distance on")
     parser.add_argument("-p", "--path", type=str, help="Path inside of Folder to calculate distance on")
+    parser.add_argument("-r", "--recursive", action="store_true", help="Calculate distance on Paths within Folder + all Sub-Folders")
     args = parser.parse_args()
 
     # Validate arguments
@@ -177,67 +184,36 @@ def main():
     root = tree.getroot()
     top_folder = root.find(".//kml:Document", ns).find("kml:Folder", ns)
 
-    # Prompt user to select a folder
+    # Folder Selection
     selected_folder = None
 
-    if not args.folder:
-        selected_folder = prompt_user_selected_folder(top_folder)
+    if not args.folder and not args.path and args.recursive :
+    
+        # Calculate total distance on all Paths within the entire file.
+        selected_folder = top_folder
 
     else:
-        selected_folder = find_folder(top_folder, args.folder)
+        
+        if args.folder:
 
-        if selected_folder is None:
-            print("Error: The folder indicated in arguments was not found in the .KML. Exiting...")
-            sys.exit(1)
+            # Use the Folder filepath passed in as the argument
+            selected_folder = find_folder(top_folder, args.folder)
 
-    paths_in_folder = selected_folder.findall("kml:Placemark[kml:LineString]", ns)
+            if selected_folder is None:
+                print("Error: The folder indicated in arguments was not found in the .KML. Exiting...")
+                sys.exit(1)
 
-    # Prompt user to select a Path
+        else:
+
+            # Prompt user to select a Folder
+            selected_folder = prompt_user_selected_folder(top_folder)
+            
+    # Path Selection
     selected_path = None
 
-    if not args.path:
-        
-        # Create a list of Path names
-        path_options = [(0, "<All Paths>")]
-        for index, path in enumerate(paths_in_folder):
-            name_element = path.find("kml:name", ns)
-            path_name = name_element.text if name_element is not None else f"Unnamed path {index}"
-            path_options.append((index + 1, path_name))  # Index starts from 1 for Paths
-        
-        while selected_path is None:
-            print("\nSelect a Path to calculate distance on. Type 0 to calculate distance on ALL PATHS in the folder: ")
+    if args.path:
 
-            # Print options for Paths
-            for idx, name in path_options:
-                print(f"{idx}. {name}")  # Regular Paths, idx starts from 0 for "All Paths"
-
-            try:
-            
-                choice = int(input("\nEnter the number of the path you want to process (or '0' for ALL PATHS): ").strip())
-                if 0 <= choice < len(path_options):
-                    if choice == 0:
-                        selected_path = "ALL" 
-                    else:
-                        selected_path = paths_in_folder[choice - 1]
-                    print(f"\nYou selected: {path_options[choice][1]}")
-                else:
-                    raise ValueError
-            except ValueError:
-                print("Invalid selection. Please enter a valid number.")
-
-        if selected_path == "ALL":
-
-            # Process all paths in the folder
-            print("Calculating distance for all Paths...")
-            for path in paths_in_folder:
-                path_distance = calculate_path_distance(path)
-                sum_all_distance += path_distance
-        else:
-            print("Calculating distance for the selected Path...")
-            sum_all_distance = calculate_path_distance(selected_path)
-
-    else:
-        # The name of the Path will be passed in.
+        # Use the Path Name passed in as the argument
         selected_path = selected_folder.find("kml:Placemark[kml:name='" + args.path + "']", ns)
         
         if selected_path is None or selected_path.find("kml:LineString", ns) is None:
@@ -245,6 +221,74 @@ def main():
             sys.exit(1)
         
         sum_all_distance = calculate_path_distance(selected_path)
+
+    else:
+
+        if args.folder:
+            
+            if args.recursive:
+
+                # Process all Paths in the selected Folder recursively            
+                print("Calculating distance for all Paths (Recursive Mode)...")
+                sum_all_distance = sum_calculate_path_distance(selected_folder.findall(".//kml:Placemark[kml:LineString]", ns))
+
+            else:
+
+                # Process all Paths in the selected Folder
+                print("Calculating distance for all Paths...")
+                sum_all_distance = sum_calculate_path_distance(selected_folder.findall("kml:Placemark[kml:LineString]", ns))
+
+        else:
+
+            if args.recursive:
+
+                 # Process all Paths in the selected Folder recursively            
+                print("Calculating distance for all Paths (Recursive Mode)...")
+                sum_all_distance = sum_calculate_path_distance(selected_folder.findall(".//kml:Placemark[kml:LineString]", ns))
+            
+            else:
+
+                # Prompt user to select a Path
+                paths_in_folder = selected_folder.findall("kml:Placemark[kml:LineString]", ns)
+
+                # Create a list of Path names
+                path_options = [(0, "<All Paths>")]
+                for index, path in enumerate(paths_in_folder):
+                    name_element = path.find("kml:name", ns)
+                    path_name = name_element.text if name_element is not None else f"Unnamed path {index}"
+                    path_options.append((index + 1, path_name))  # Index starts from 1 for Paths
+                
+                while selected_path is None:
+                    print("\nSelect a Path to calculate distance on. Type 0 to calculate distance on ALL PATHS in the folder: ")
+
+                    # Print options for Paths
+                    for idx, name in path_options:
+                        print(f"{idx}. {name}")  # Regular Paths, idx starts from 0 for "All Paths"
+
+                    try:
+                    
+                        choice = int(input("\nEnter the number of the path you want to process (or '0' for ALL PATHS): ").strip())
+                        if 0 <= choice < len(path_options):
+                            if choice == 0:
+                                selected_path = "ALL" 
+                            else:
+                                selected_path = paths_in_folder[choice - 1]
+                            print(f"\nYou selected: {path_options[choice][1]}")
+                        else:
+                            raise ValueError
+                    except ValueError:
+                        print("Invalid selection. Please enter a valid number.")
+
+                if selected_path == "ALL":
+
+                    # Process all Paths in the selected Folder
+                    print("Calculating distance for all Paths...")
+                    sum_all_distance = sum_calculate_path_distance(paths_in_folder)
+
+                else:
+                    
+                    print("Calculating distance for the selected Path...")
+                    sum_all_distance = calculate_path_distance(selected_path)
 
     print("Total Distance: " + str(sum_all_distance))
 
