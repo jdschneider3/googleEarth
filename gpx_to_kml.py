@@ -2,117 +2,88 @@
 gpx_to_kml.py
 
 Summary:
-Process a .GPX file as a placemark to append into a Google Earth KML file.
+    Converts a single .GPX file into a Google Earth Path and appends to the destination Google Earth .KML file.
 
 Arguments:
-    1) [Required] .gpx file path
-       Each .gpx file will be transformed into a single placemark in the destination .KML file  
-    2) [Required] Destination KML File Path - the destination .KML file to write the .gpx as a placemark
-    3) [Optional, prompted if not entered] Name for the placemark
-    4) [Optional, prompted if not entered] .KML Folder to put the placemark into 
+    1) [Required] -i: Input (.GPX) file path.
+    2) [Required] -o: Output (.KML) file path.
+    3) [Optional] -p: Name of the Path that the .GPX will be converted into.
+    4) [Optional] -f: Folder path within the .KML file to put the new Path into.
+
 """
 
 import sys
-import os
-import argparse
-from lxml import etree
+import googleEarth_util as util
 
-ns = {"kml": "http://www.opengis.net/kml/2.2",
-      "gpx": "http://www.topografix.com/GPX/1/1"}
+def main():
 
-def check_file_extension(filename, extension):
-    if not filename.lower().endswith(extension):
-        raise argparse.ArgumentTypeError(f"Invalid file type: Only {extension} files are allowed.")
-    if not os.path.isfile(filename):
-        raise argparse.ArgumentTypeError(f"File '{filename}' does not exist.")
-    return filename  # Return the valid filename
+    # Handle Arguments
+    parser = util.argparse.ArgumentParser(description="Converts a single .GPX file into a Google Earth Path and appends to the destination Google Earth .KML file.")
 
-def check_gpx_file(filename):
-    return check_file_extension(filename, ".gpx")
+    parser.add_argument("-i", "--gpx", type=util.check_gpx_file, required=True, help="Input (.GPX) file path.")
+    parser.add_argument("-o", "--kml", type=util.check_kml_file, required=True, help="Output (.KML) file path.")
+    parser.add_argument("-p", "--path", type=str, help="Name of the Path that the .GPX will be converted into.")
+    parser.add_argument("-f", "--folder", type=str, help="Folder path within the .KML file to put the new Path into.")
+    args = parser.parse_args()
 
-def check_kml_file(filename):
-    return check_file_extension(filename, ".kml")
+    while not args.path:
+        args.path = input("Please enter a name for the new Path: ").strip()
 
-# Handle Arguments
-parser = argparse.ArgumentParser(description="Process a GPX file as a placemark to append into a KML file.")
+    # Parse the .GPX file
+    gpx_tree = util.etree.parse(args.gpx)
+    gpx_root = gpx_tree.getroot()
 
-parser.add_argument("-i", "--gpx", type=check_gpx_file, required=True, help="Input (.gpx) file path")
-parser.add_argument("-o", "--kml", type=check_kml_file, required=True, help="Output (.kml) file path")
-parser.add_argument("-p", "--placemark", type=str, help="Name of the placemark that the .gpx will be turned into")
-parser.add_argument("-f", "--folder", type=str, help="Folder to put the placemark into")
+    # Build the .GPX Path Placemark XML
+    gpx_placemark = f"""\
+        <Placemark>
+            <name>{args.path}</name>
+            <visibility>0</visibility>
+            <styleUrl>#inline</styleUrl>
+            <LineString>
+                <tessellate>1</tessellate>
+                <coordinates>"""
 
-args = parser.parse_args()
+    for trkpt in gpx_root.xpath("//gpx:trkpt", namespaces=util.ns):
 
-if not args.placemark:
-    args.placemark = input("Please enter a name for the Placemark: ")
+        gpx_placemark = gpx_placemark + trkpt.get("lon") + "," + trkpt.get("lat") + ",0 "
+        
+    gpx_placemark = gpx_placemark + """</coordinates> </LineString> </Placemark>"""
 
-# Parse the GPX file
-tree = etree.parse(args.gpx)
-root = tree.getroot()
+    gpx_placemark_element = util.etree.XML(gpx_placemark)
+    util.etree.indent(gpx_placemark_element)
 
-# Build the Placemark XML
-kml_placemark = f"""\
-<Placemark>
-    <name>{args.placemark}</name>
-    <visibility>0</visibility>
-    <styleUrl>#inline</styleUrl>
-    <LineString>
-        <tessellate>1</tessellate>
-        <coordinates>"""
+    # Parse the KML file
+    kml_tree = util.etree.parse(args.kml)
+    kml_root = kml_tree.getroot()
+    top_folder = kml_root.find(".//kml:Folder", util.ns)
 
-for trkpt in root.xpath("//gpx:trkpt", namespaces=ns):
+    # Folder Selection
+    selected_folder = None
 
-    kml_placemark = kml_placemark + trkpt.get("lon") + "," + trkpt.get("lat") + ",0 "
-    
-kml_placemark = kml_placemark + """</coordinates> </LineString> </Placemark>"""
+    if args.folder:
 
-placemark_element = etree.XML(kml_placemark)
-etree.indent(placemark_element)
+        # Use the Folder path passed in as the argument
+        selected_folder = util.kml_find_folder(top_folder, args.folder)
 
-# Parse the KML file
-tree = etree.parse(args.kml)
-root = tree.getroot()
+        if selected_folder is None:
+            print("Error: The folder indicated in arguments was not found within the .KML. Exiting...")
+            sys.exit(1)
 
-my_places_folder = root.find(".//kml:Folder[kml:name='My Places']", ns)
+    else:
+        
+        # Prompt user to select a Folder
+        selected_folder = util.kml_prompt_user_selected_folder(top_folder)
 
-subfolders = my_places_folder.findall("kml:Folder", ns)
+    # Append the Path Placemark with pretty-printing
+    selected_folder.append(gpx_placemark_element)
 
-# Create a list of folder names
-folder_options = []
-for index, subfolder in enumerate(subfolders):
-    name_element = subfolder.find("kml:name", ns)
-    folder_name = name_element.text if name_element is not None else f"Unnamed Folder {index}"
-    folder_options.append((index, folder_name))
+    with open(args.kml, "wb") as f:
+        f.write(util.etree.tostring(kml_tree, pretty_print=True, encoding="utf-8", xml_declaration=True))
 
-# Prompt user to select a folder
-selected_folder = None
+    print("Path successfully added to the .KML file!")
 
-if not args.folder:
-    while selected_folder is None:
-        print("Select a folder to iterate through:")
-        for idx, name in folder_options:
-            print(f"{idx + 1}. {name}")
-
-        try:
-            choice = int(input("Enter the number of the folder you want to process: ")) - 1
-            if 0 <= choice < len(folder_options):
-                selected_folder = subfolders[choice]
-                print(f"\nYou selected: {folder_options[choice][1]}")
-            else:
-                print("Invalid selection.")
-        except ValueError:
-            print("Invalid input. Please enter a number.")
-else:
-    selected_folder = my_places_folder.find(".//kml:Folder[kml:name='" + args.folder + "']", namespaces=ns)
-
-    if selected_folder is None:
-        print("Error: The folder indicated in arguments was not found in the .KML. Exiting...")
-        sys.exit(1)
-
-selected_folder.append(placemark_element)
-
-# Write back with pretty-printing
-with open(args.kml, "wb") as f:
-    f.write(etree.tostring(tree, pretty_print=True, encoding="utf-8", xml_declaration=True))
-
-print("Placemark successfully added to the KML file.")
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        raise SystemExit(130)
