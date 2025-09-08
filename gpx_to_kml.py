@@ -5,11 +5,10 @@ Summary:
     Converts a single .GPX file into a Google Earth Path and appends to the destination Google Earth .KML file.
 
 Arguments:
-    1) [Required] .GPX File Path
-       The .GPX file will be converted into a single Path within the destination .KML file 
-    2) [Required] Destination .KML File Path - the destination .KML file to write the .GPX as a Path 
-    3) [Optional, prompted if not entered] Name for the Path 
-    4) [Optional, prompted if not entered] .KML "Folder Path" - a Folder to put the new Path into 
+    1) [Required] -i: Input (.GPX) file path.
+    2) [Required] -o: Output (.KML) file path.
+    3) [Optional] -p: Name of the Path that the .GPX will be converted into.
+    4) [Optional] -f: Folder path within the .KML file to put the new Path into.
 
 """
 
@@ -21,14 +20,14 @@ def main():
     # Handle Arguments
     parser = util.argparse.ArgumentParser(description="Converts a single .GPX file into a Google Earth Path and appends to the destination Google Earth .KML file.")
 
-    parser.add_argument("-i", "--gpx", type=util.check_gpx_file, required=True, help="Input (.GPX) file path")
-    parser.add_argument("-o", "--kml", type=util.check_kml_file, required=True, help="Output (.KML) file path")
-    parser.add_argument("-n", "--name", type=str, help="Name of the Path that the .GPX will be converted into")
-    parser.add_argument("-f", "--folder", type=str, help="Folder path within the .KML file to put the new Path into")
+    parser.add_argument("-i", "--gpx", type=util.check_gpx_file, required=True, help="Input (.GPX) file path.")
+    parser.add_argument("-o", "--kml", type=util.check_kml_file, required=True, help="Output (.KML) file path.")
+    parser.add_argument("-p", "--path", type=str, help="Name of the Path that the .GPX will be converted into.")
+    parser.add_argument("-f", "--folder", type=str, help="Folder path within the .KML file to put the new Path into.")
     args = parser.parse_args()
 
-    if not args.name:
-        args.name = input("Please enter a name for the new Path: ")
+    while not args.path:
+        args.path = input("Please enter a name for the new Path: ").strip()
 
     # Parse the .GPX file
     gpx_tree = util.etree.parse(args.gpx)
@@ -36,13 +35,13 @@ def main():
 
     # Build the .GPX Path Placemark XML
     gpx_placemark = f"""\
-    <Placemark>
-        <name>{args.name}</name>
-        <visibility>0</visibility>
-        <styleUrl>#inline</styleUrl>
-        <LineString>
-            <tessellate>1</tessellate>
-            <coordinates>"""
+        <Placemark>
+            <name>{args.path}</name>
+            <visibility>0</visibility>
+            <styleUrl>#inline</styleUrl>
+            <LineString>
+                <tessellate>1</tessellate>
+                <coordinates>"""
 
     for trkpt in gpx_root.xpath("//gpx:trkpt", namespaces=util.ns):
 
@@ -63,7 +62,7 @@ def main():
 
     if args.folder:
 
-        # Use the Folder filepath passed in as the argument
+        # Use the Folder path passed in as the argument
         selected_folder = util.kml_find_folder(top_folder, args.folder)
 
         if selected_folder is None:
@@ -81,7 +80,7 @@ def main():
     with open(args.kml, "wb") as f:
         f.write(util.etree.tostring(kml_tree, pretty_print=True, encoding="utf-8", xml_declaration=True))
 
-    print("Path successfully added to the KML file!")
+    print("Path successfully added to the .KML file!")
 
 if __name__ == "__main__":
     try:
